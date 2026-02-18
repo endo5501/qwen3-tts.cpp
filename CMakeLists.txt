@@ -139,6 +139,58 @@ target_link_libraries(qwen3_tts PUBLIC
     Threads::Threads
 )
 
+# FFI shared library for Flutter integration
+option(QWEN3_TTS_BUILD_SHARED "Build shared library for FFI" OFF)
+if(QWEN3_TTS_BUILD_SHARED)
+    add_library(qwen3_tts_ffi SHARED
+        src/qwen3_tts_c_api.cpp
+    )
+    target_include_directories(qwen3_tts_ffi PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${GGML_DIR}/include
+    )
+    target_link_libraries(qwen3_tts_ffi PRIVATE
+        qwen3_tts
+    )
+    # Link GGML backend libraries that are referenced by the registry
+    target_link_directories(qwen3_tts_ffi PRIVATE
+        ${GGML_BUILD_DIR}/src
+        ${GGML_BUILD_DIR}/src/ggml-blas
+        ${GGML_BUILD_DIR}/src/ggml-metal
+    )
+    if(APPLE)
+        if(EXISTS "${GGML_BUILD_DIR}/src/ggml-metal/libggml-metal.a")
+            target_link_libraries(qwen3_tts_ffi PRIVATE
+                ggml-metal
+                "-framework Metal"
+                "-framework Foundation"
+                "-framework MetalKit"
+            )
+        endif()
+        if(EXISTS "${GGML_BUILD_DIR}/src/ggml-blas/libggml-blas.a")
+            target_link_libraries(qwen3_tts_ffi PRIVATE
+                ggml-blas
+                "-framework Accelerate"
+            )
+        endif()
+    endif()
+    set_target_properties(qwen3_tts_ffi PROPERTIES
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+    if(APPLE)
+        set_target_properties(qwen3_tts_ffi PROPERTIES
+            INSTALL_NAME_DIR "@rpath"
+            BUILD_WITH_INSTALL_RPATH ON
+        )
+    endif()
+    install(TARGETS qwen3_tts_ffi
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin
+    )
+endif()
+
 # CLI executable
 add_executable(qwen3-tts-cli
     src/main.cpp
