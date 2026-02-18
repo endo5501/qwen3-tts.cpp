@@ -1,0 +1,15 @@
+[project]
+name = "qwen3-tts-cpp"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "coremltools>=9.0",
+    "gguf>=0.17.1",
+    "huggingface-hub>=1.4.1",
+    "numpy>=2.4.2",
+    "safetensors>=0.7.0",
+    "torch>=2.10.0",
+    "tqdm>=4.67.3",
+]
