@@ -7,6 +7,7 @@ struct qwen3_tts_ctx {
     qwen3_tts::Qwen3TTS   tts;
     qwen3_tts::tts_result  last_result;
     std::string            last_error;
+    int32_t                language_id = 2058; // Japanese
 };
 
 qwen3_tts_ctx * qwen3_tts_init(const char * model_dir, int n_threads) {
@@ -34,12 +35,18 @@ void qwen3_tts_free(qwen3_tts_ctx * ctx) {
     delete ctx;
 }
 
+void qwen3_tts_set_language(qwen3_tts_ctx * ctx, int language_id) {
+    if (!ctx) return;
+    ctx->language_id = language_id;
+}
+
 int qwen3_tts_synthesize(qwen3_tts_ctx * ctx, const char * text) {
     if (!ctx || !text) return -1;
 
     qwen3_tts::tts_params params;
     params.print_progress = false;
     params.print_timing   = false;
+    params.language_id    = ctx->language_id;
 
     ctx->last_result = ctx->tts.synthesize(text, params);
     if (!ctx->last_result.success) {
@@ -58,6 +65,7 @@ int qwen3_tts_synthesize_with_voice(qwen3_tts_ctx * ctx,
     qwen3_tts::tts_params params;
     params.print_progress = false;
     params.print_timing   = false;
+    params.language_id    = ctx->language_id;
 
     ctx->last_result = ctx->tts.synthesize_with_voice(text, ref_wav_path, params);
     if (!ctx->last_result.success) {
