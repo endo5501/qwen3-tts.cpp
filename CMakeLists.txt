@@ -11,6 +11,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native")
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
 endif()
+if(MSVC)
+    add_compile_options(/utf-8)
+    add_compile_definitions(_USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS)
+endif()
 
 # Timing instrumentation option
 option(QWEN3_TTS_TIMING "Enable detailed timing instrumentation" OFF)
