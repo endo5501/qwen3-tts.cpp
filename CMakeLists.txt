@@ -178,6 +178,25 @@ if(QWEN3_TTS_BUILD_SHARED)
             )
         endif()
     endif()
+    if(WIN32)
+        find_library(GGML_VULKAN_LIB
+            NAMES ggml-vulkan
+            PATHS "${GGML_BUILD_DIR}/src/ggml-vulkan"
+            PATH_SUFFIXES Release Debug RelWithDebInfo MinSizeRel
+            NO_DEFAULT_PATH
+        )
+        if(GGML_VULKAN_LIB)
+            find_package(Vulkan QUIET)
+            if(Vulkan_FOUND)
+                target_link_libraries(qwen3_tts_ffi PRIVATE
+                    "${GGML_VULKAN_LIB}"
+                    Vulkan::Vulkan
+                )
+            else()
+                message(WARNING "ggml-vulkan found but Vulkan SDK not found. Vulkan backend skipped.")
+            endif()
+        endif()
+    endif()
     set_target_properties(qwen3_tts_ffi PROPERTIES
         C_VISIBILITY_PRESET hidden
         CXX_VISIBILITY_PRESET hidden
