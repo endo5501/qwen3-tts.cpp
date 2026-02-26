@@ -1,3 +1,7 @@
+#ifdef _WIN32
+#define NOMINMAX
+#endif
+
 #include "qwen3_tts.h"
 #include "gguf_loader.h"
 
@@ -17,7 +21,6 @@
 #ifdef __APPLE__
 #include <mach/mach.h>
 #elif defined(_WIN32)
-#define NOMINMAX
 #include <windows.h>
 #include <psapi.h>
 #pragma comment(lib, "psapi")
