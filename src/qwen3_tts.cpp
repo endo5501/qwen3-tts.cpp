@@ -8,6 +8,11 @@
 #include <fstream>
 #include <cstdint>
 #include <cstdlib>
+#include <algorithm>
+
+#define MINIMP3_IMPLEMENTATION
+#define MINIMP3_FLOAT_OUTPUT
+#include "minimp3_ex.h"
 
 #ifdef __APPLE__
 #include <mach/mach.h>
@@ -124,17 +129,13 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
 
     transformer_.unload_model();
     audio_decoder_.unload_model();
-    transformer_loaded_ = false;
-    decoder_loaded_ = false;
-    
+
     // Construct model paths
-    std::string tts_model_path = model_dir + "/qwen3-tts-0.6b-f16.gguf";
-    std::string tokenizer_model_path = model_dir + "/qwen3-tts-tokenizer-f16.gguf";
-    tts_model_path_ = tts_model_path;
-    decoder_model_path_ = tokenizer_model_path;
-    encoder_loaded_ = false;
-    transformer_loaded_ = false;
-    decoder_loaded_ = false;
+    tts_model_path_      = model_dir + "/qwen3-tts-0.6b-f16.gguf";
+    decoder_model_path_  = model_dir + "/qwen3-tts-tokenizer-f16.gguf";
+    encoder_loaded_      = false;
+    transformer_loaded_  = false;
+    decoder_loaded_      = false;
 
     const char * low_mem_env = std::getenv("QWEN3_TTS_LOW_MEM");
     low_mem_mode_ = low_mem_env && low_mem_env[0] != '\0' && low_mem_env[0] != '0';
@@ -143,13 +144,13 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     }
     
     // Load TTS model (contains text tokenizer + transformer for generation)
-    fprintf(stderr, "Loading TTS model from %s...\n", tts_model_path.c_str());
-    
+    fprintf(stderr, "Loading TTS model from %s...\n", tts_model_path_.c_str());
+
     // Load text tokenizer from TTS model
     int64_t t_tokenizer_start = get_time_ms();
     {
         GGUFLoader loader;
-        if (!loader.open(tts_model_path)) {
+        if (!loader.open(tts_model_path_)) {
             error_msg_ = "Failed to open TTS model: " + loader.get_error();
             return false;
         }
@@ -169,7 +170,7 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     
     // Load TTS transformer from TTS model
     int64_t t_transformer_start = get_time_ms();
-    if (!transformer_.load_model(tts_model_path)) {
+    if (!transformer_.load_model(tts_model_path_)) {
         error_msg_ = "Failed to load TTS transformer: " + transformer_.get_error();
         return false;
     }
@@ -181,9 +182,9 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     
     if (!low_mem_mode_) {
         // Load vocoder (audio decoder) from tokenizer model
-        fprintf(stderr, "Loading vocoder from %s...\n", tokenizer_model_path.c_str());
+        fprintf(stderr, "Loading vocoder from %s...\n", decoder_model_path_.c_str());
         int64_t t_decoder_start = get_time_ms();
-        if (!audio_decoder_.load_model(tokenizer_model_path)) {
+        if (!audio_decoder_.load_model(decoder_model_path_)) {
             error_msg_ = "Failed to load vocoder: " + audio_decoder_.get_error();
             return false;
         }
@@ -458,15 +459,39 @@ void Qwen3TTS::set_progress_callback(tts_progress_callback_t callback) {
     progress_callback_ = callback;
 }
 
-// WAV file loading (16-bit PCM or 32-bit float)
-bool load_audio_file(const std::string & path, std::vector<float> & samples, 
-                     int & sample_rate) {
+// Mix an interleaved multi-channel buffer down to mono, storing results in `out`.
+// InputT must be convertible to float; `scale` is applied before summing.
+template<typename InputT>
+static void mix_to_mono(const InputT * interleaved, int n_samples, int num_channels,
+                        float scale, std::vector<float> & out) {
+    out.resize(n_samples);
+    for (int i = 0; i < n_samples; ++i) {
+        float sum = 0.0f;
+        for (int c = 0; c < num_channels; ++c) {
+            sum += static_cast<float>(interleaved[i * num_channels + c]) * scale;
+        }
+        out[i] = sum / num_channels;
+    }
+}
+
+// Get lowercase file extension from path
+static std::string get_file_extension(const std::string & path) {
+    auto dot_pos = path.rfind('.');
+    if (dot_pos == std::string::npos) return "";
+    std::string ext = path.substr(dot_pos);
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    return ext;
+}
+
+// WAV file loading (16-bit PCM, 32-bit PCM, or 32-bit IEEE float)
+static bool load_wav_file(const std::string & path, std::vector<float> & samples,
+                          int & sample_rate) {
     FILE * f = fopen(path.c_str(), "rb");
     if (!f) {
         fprintf(stderr, "ERROR: Cannot open WAV file: %s\n", path.c_str());
         return false;
     }
-    
+
     // Read RIFF header
     char riff[4];
     if (fread(riff, 1, 4, f) != 4 || strncmp(riff, "RIFF", 4) != 0) {
@@ -474,40 +499,40 @@ bool load_audio_file(const std::string & path, std::vector<float> & samples,
         fclose(f);
         return false;
     }
-    
+
     uint32_t file_size;
     if (fread(&file_size, 4, 1, f) != 1) {
         fclose(f);
         return false;
     }
-    
+
     char wave[4];
     if (fread(wave, 1, 4, f) != 4 || strncmp(wave, "WAVE", 4) != 0) {
         fprintf(stderr, "ERROR: Not a WAVE file\n");
         fclose(f);
         return false;
     }
-    
+
     // Find fmt and data chunks
     uint16_t audio_format = 0;
     uint16_t num_channels = 0;
     uint32_t sr = 0;
     uint16_t bits_per_sample = 0;
-    
+
     while (!feof(f)) {
         char chunk_id[4];
         uint32_t chunk_size;
-        
+
         if (fread(chunk_id, 1, 4, f) != 4) break;
         if (fread(&chunk_size, 4, 1, f) != 1) break;
-        
+
         if (strncmp(chunk_id, "fmt ", 4) == 0) {
             if (fread(&audio_format, 2, 1, f) != 1) break;
             if (fread(&num_channels, 2, 1, f) != 1) break;
             if (fread(&sr, 4, 1, f) != 1) break;
             fseek(f, 6, SEEK_CUR);  // Skip byte rate and block align
             if (fread(&bits_per_sample, 2, 1, f) != 1) break;
-            
+
             // Skip any extra format bytes
             if (chunk_size > 16) {
                 fseek(f, chunk_size - 16, SEEK_CUR);
@@ -515,45 +540,25 @@ bool load_audio_file(const std::string & path, std::vector<float> & samples,
         }
         else if (strncmp(chunk_id, "data", 4) == 0) {
             sample_rate = sr;
-            
+
             if (audio_format == 1) {  // PCM
                 if (bits_per_sample == 16) {
                     int n_samples = chunk_size / (2 * num_channels);
-                    samples.resize(n_samples);
-                    
                     std::vector<int16_t> raw(n_samples * num_channels);
                     if (fread(raw.data(), 2, n_samples * num_channels, f) != (size_t)(n_samples * num_channels)) {
                         fclose(f);
                         return false;
                     }
-                    
-                    // Convert to mono float
-                    for (int i = 0; i < n_samples; ++i) {
-                        float sum = 0.0f;
-                        for (int c = 0; c < num_channels; ++c) {
-                            sum += raw[i * num_channels + c] / 32768.0f;
-                        }
-                        samples[i] = sum / num_channels;
-                    }
+                    mix_to_mono(raw.data(), n_samples, num_channels, 1.0f / 32768.0f, samples);
                 }
                 else if (bits_per_sample == 32) {
                     int n_samples = chunk_size / (4 * num_channels);
-                    samples.resize(n_samples);
-                    
                     std::vector<int32_t> raw(n_samples * num_channels);
                     if (fread(raw.data(), 4, n_samples * num_channels, f) != (size_t)(n_samples * num_channels)) {
                         fclose(f);
                         return false;
                     }
-                    
-                    // Convert to mono float
-                    for (int i = 0; i < n_samples; ++i) {
-                        float sum = 0.0f;
-                        for (int c = 0; c < num_channels; ++c) {
-                            sum += raw[i * num_channels + c] / 2147483648.0f;
-                        }
-                        samples[i] = sum / num_channels;
-                    }
+                    mix_to_mono(raw.data(), n_samples, num_channels, 1.0f / 2147483648.0f, samples);
                 }
                 else {
                     fprintf(stderr, "ERROR: Unsupported bits per sample: %d\n", bits_per_sample);
@@ -563,29 +568,19 @@ bool load_audio_file(const std::string & path, std::vector<float> & samples,
             }
             else if (audio_format == 3) {  // IEEE float
                 int n_samples = chunk_size / (4 * num_channels);
-                samples.resize(n_samples);
-                
                 std::vector<float> raw(n_samples * num_channels);
                 if (fread(raw.data(), 4, n_samples * num_channels, f) != (size_t)(n_samples * num_channels)) {
                     fclose(f);
                     return false;
                 }
-                
-                // Convert to mono
-                for (int i = 0; i < n_samples; ++i) {
-                    float sum = 0.0f;
-                    for (int c = 0; c < num_channels; ++c) {
-                        sum += raw[i * num_channels + c];
-                    }
-                    samples[i] = sum / num_channels;
-                }
+                mix_to_mono(raw.data(), n_samples, num_channels, 1.0f, samples);
             }
             else {
                 fprintf(stderr, "ERROR: Unsupported audio format: %d\n", audio_format);
                 fclose(f);
                 return false;
             }
-            
+
             fclose(f);
             return true;
         }
@@ -594,10 +589,51 @@ bool load_audio_file(const std::string & path, std::vector<float> & samples,
             fseek(f, chunk_size, SEEK_CUR);
         }
     }
-    
+
     fprintf(stderr, "ERROR: No data chunk found\n");
     fclose(f);
     return false;
+}
+
+// MP3 file loading via minimp3
+static bool load_mp3_file(const std::string & path, std::vector<float> & samples,
+                          int & sample_rate) {
+    mp3dec_t mp3d;
+    mp3dec_file_info_t info = {};
+
+    mp3dec_init(&mp3d);
+
+    int result = mp3dec_load(&mp3d, path.c_str(), &info, NULL, NULL);
+    if (result != 0 || !info.buffer || info.samples <= 0 || info.channels <= 0 || info.hz <= 0) {
+        fprintf(stderr, "ERROR: Failed to decode MP3 file: %s (error: %d)\n", path.c_str(), result);
+        if (info.buffer) free(info.buffer);
+        return false;
+    }
+
+    sample_rate = info.hz;
+    const int num_channels = info.channels;
+    const int n_samples = (int)(info.samples / num_channels);
+
+    // Mix down to mono (minimp3 with MINIMP3_FLOAT_OUTPUT gives float samples)
+    mix_to_mono(info.buffer, n_samples, num_channels, 1.0f, samples);
+
+    free(info.buffer);
+    return true;
+}
+
+// Audio file loading - dispatches to format-specific loaders based on file extension
+bool load_audio_file(const std::string & path, std::vector<float> & samples,
+                     int & sample_rate) {
+    std::string ext = get_file_extension(path);
+
+    if (ext == ".wav") {
+        return load_wav_file(path, samples, sample_rate);
+    } else if (ext == ".mp3") {
+        return load_mp3_file(path, samples, sample_rate);
+    } else {
+        fprintf(stderr, "ERROR: Unsupported audio format '%s'. Supported formats: .wav, .mp3\n", ext.c_str());
+        return false;
+    }
 }
 
 // WAV file saving (16-bit PCM at specified sample rate)
