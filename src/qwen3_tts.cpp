@@ -30,6 +30,17 @@
 
 namespace qwen3_tts {
 
+#ifdef _WIN32
+static std::wstring utf8_to_wstring(const std::string & utf8) {
+    if (utf8.empty()) return std::wstring();
+    int len = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
+    if (len <= 0) return std::wstring();
+    std::wstring wstr(len - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, &wstr[0], len);
+    return wstr;
+}
+#endif
+
 static int64_t get_time_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -489,7 +500,11 @@ static std::string get_file_extension(const std::string & path) {
 // WAV file loading (16-bit PCM, 32-bit PCM, or 32-bit IEEE float)
 static bool load_wav_file(const std::string & path, std::vector<float> & samples,
                           int & sample_rate) {
+#ifdef _WIN32
+    FILE * f = _wfopen(utf8_to_wstring(path).c_str(), L"rb");
+#else
     FILE * f = fopen(path.c_str(), "rb");
+#endif
     if (!f) {
         fprintf(stderr, "ERROR: Cannot open WAV file: %s\n", path.c_str());
         return false;
@@ -606,7 +621,11 @@ static bool load_mp3_file(const std::string & path, std::vector<float> & samples
 
     mp3dec_init(&mp3d);
 
+#ifdef _WIN32
+    int result = mp3dec_load_w(&mp3d, utf8_to_wstring(path).c_str(), &info, NULL, NULL);
+#else
     int result = mp3dec_load(&mp3d, path.c_str(), &info, NULL, NULL);
+#endif
     if (result != 0 || !info.buffer || info.samples <= 0 || info.channels <= 0 || info.hz <= 0) {
         fprintf(stderr, "ERROR: Failed to decode MP3 file: %s (error: %d)\n", path.c_str(), result);
         if (info.buffer) free(info.buffer);
@@ -642,7 +661,11 @@ bool load_audio_file(const std::string & path, std::vector<float> & samples,
 // WAV file saving (16-bit PCM at specified sample rate)
 bool save_audio_file(const std::string & path, const std::vector<float> & samples,
                      int sample_rate) {
+#ifdef _WIN32
+    FILE * f = _wfopen(utf8_to_wstring(path).c_str(), L"wb");
+#else
     FILE * f = fopen(path.c_str(), "wb");
+#endif
     if (!f) {
         fprintf(stderr, "ERROR: Cannot create WAV file: %s\n", path.c_str());
         return false;
