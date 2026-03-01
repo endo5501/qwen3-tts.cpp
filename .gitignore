@@ -9,6 +9,7 @@ build/
 models/*.gguf
 models/Qwen3-TTS-*/
 models/coreml/
+models/customvoice
 
 # Reference outputs (generated)
 reference/*.bin
