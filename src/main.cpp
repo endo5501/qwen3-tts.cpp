@@ -12,6 +12,7 @@ void print_usage(const char * program) {
     fprintf(stderr, "  -t, --text <text>      Text to synthesize (required)\n");
     fprintf(stderr, "  -o, --output <file>    Output WAV file (default: output.wav)\n");
     fprintf(stderr, "  -r, --reference <file> Reference audio for voice cloning\n");
+    fprintf(stderr, "  -i, --instruct <text>  Instruct text for CustomVoice style control\n");
     fprintf(stderr, "  --temperature <val>    Sampling temperature (default: 0.9, 0=greedy)\n");
     fprintf(stderr, "  --top-k <n>            Top-k sampling (default: 50, 0=disabled)\n");
     fprintf(stderr, "  --top-p <val>          Top-p sampling (default: 1.0)\n");
@@ -65,6 +66,12 @@ int main(int argc, char ** argv) {
                 return 1;
             }
             reference_audio = argv[i];
+        } else if (arg == "-i" || arg == "--instruct") {
+            if (++i >= argc) {
+                fprintf(stderr, "Error: missing instruct text\n");
+                return 1;
+            }
+            params.instruct = argv[i];
         } else if (arg == "--temperature") {
             if (++i >= argc) {
                 fprintf(stderr, "Error: missing temperature value\n");
@@ -158,6 +165,10 @@ int main(int argc, char ** argv) {
     // Generate speech
     qwen3_tts::tts_result result;
     
+    if (!params.instruct.empty()) {
+        fprintf(stderr, "Instruct: \"%s\"\n", params.instruct.c_str());
+    }
+
     if (reference_audio.empty()) {
         fprintf(stderr, "Synthesizing: \"%s\"\n", text.c_str());
         result = tts.synthesize(text, params);

@@ -142,6 +142,27 @@ target_link_libraries(qwen3_tts PUBLIC
     audio_tokenizer_decoder
     Threads::Threads
 )
+# Link Apple frameworks required by ggml backends
+if(APPLE)
+    target_link_directories(qwen3_tts PUBLIC
+        ${GGML_BUILD_DIR}/src/ggml-metal
+        ${GGML_BUILD_DIR}/src/ggml-blas
+    )
+    if(EXISTS "${GGML_BUILD_DIR}/src/ggml-metal/libggml-metal.a")
+        target_link_libraries(qwen3_tts PUBLIC
+            ggml-metal
+            "-framework Metal"
+            "-framework Foundation"
+            "-framework MetalKit"
+        )
+    endif()
+    if(EXISTS "${GGML_BUILD_DIR}/src/ggml-blas/libggml-blas.a")
+        target_link_libraries(qwen3_tts PUBLIC
+            ggml-blas
+            "-framework Accelerate"
+        )
+    endif()
+endif()
 
 # FFI shared library for Flutter integration
 option(QWEN3_TTS_BUILD_SHARED "Build shared library for FFI" OFF)
