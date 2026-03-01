@@ -76,6 +76,47 @@ int qwen3_tts_synthesize_with_voice(qwen3_tts_ctx * ctx,
     return 0;
 }
 
+int qwen3_tts_synthesize_with_instruct(qwen3_tts_ctx * ctx,
+                                        const char * text,
+                                        const char * instruct) {
+    if (!ctx || !text) return -1;
+
+    qwen3_tts::tts_params params;
+    params.print_progress = false;
+    params.print_timing   = false;
+    params.language_id    = ctx->language_id;
+    if (instruct) params.instruct = instruct;
+
+    ctx->last_result = ctx->tts.synthesize(text, params);
+    if (!ctx->last_result.success) {
+        ctx->last_error = ctx->last_result.error_msg;
+        return -1;
+    }
+    ctx->last_error.clear();
+    return 0;
+}
+
+int qwen3_tts_synthesize_with_voice_and_instruct(qwen3_tts_ctx * ctx,
+                                                    const char * text,
+                                                    const char * ref_wav_path,
+                                                    const char * instruct) {
+    if (!ctx || !text || !ref_wav_path) return -1;
+
+    qwen3_tts::tts_params params;
+    params.print_progress = false;
+    params.print_timing   = false;
+    params.language_id    = ctx->language_id;
+    if (instruct) params.instruct = instruct;
+
+    ctx->last_result = ctx->tts.synthesize_with_voice(text, ref_wav_path, params);
+    if (!ctx->last_result.success) {
+        ctx->last_error = ctx->last_result.error_msg;
+        return -1;
+    }
+    ctx->last_error.clear();
+    return 0;
+}
+
 const float * qwen3_tts_get_audio(const qwen3_tts_ctx * ctx) {
     if (!ctx || ctx->last_result.audio.empty()) return nullptr;
     return ctx->last_result.audio.data();

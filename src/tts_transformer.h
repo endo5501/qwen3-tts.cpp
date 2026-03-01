@@ -264,7 +264,9 @@ public:
                   int32_t language_id = 2050,
                   float repetition_penalty = 1.05f,
                   float temperature = 0.9f,
-                  int32_t top_k = 50);
+                  int32_t top_k = 50,
+                  const int32_t * instruct_tokens = nullptr,
+                  int32_t n_instruct_tokens = 0);
     
     const tts_transformer_config & get_config() const { return model_.config; }
     
@@ -290,7 +292,9 @@ private:
                              const float * speaker_embd, int32_t language_id,
                              std::vector<float> & prefill_embd,
                              std::vector<float> & trailing_text_hidden,
-                             std::vector<float> & tts_pad_embed);
+                             std::vector<float> & tts_pad_embed,
+                             const int32_t * instruct_tokens = nullptr,
+                             int32_t n_instruct_tokens = 0);
 
     struct ggml_cgraph * build_prefill_forward_graph(int32_t n_tokens, int32_t n_past);
 

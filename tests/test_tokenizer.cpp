@@ -180,6 +180,40 @@ int main(int argc, char ** argv) {
         printf("  SKIP: Reference file not found at %s\n\n", ref_path.c_str());
     }
     
+    // Test 8: Encode instruct text
+    printf("Test 8: Encode instruct text 'Happy'\n");
+    auto instruct_tokens = tokenizer.encode_instruct("Happy");
+    printf("  Tokens: [");
+    for (size_t i = 0; i < instruct_tokens.size(); i++) {
+        printf("%d", instruct_tokens[i]);
+        if (i + 1 < instruct_tokens.size()) printf(", ");
+    }
+    printf("]\n");
+
+    // Verify structure: [im_start, user, \n, ...instruct..., im_end, \n]
+    assert(instruct_tokens.size() >= 5);
+    assert(instruct_tokens[0] == tokenizer.bos_token_id());  // <|im_start|>
+    // instruct_tokens[1] should be user token ID (verified below)
+    assert(instruct_tokens[2] == 198);  // \n
+    assert(instruct_tokens[instruct_tokens.size() - 2] == tokenizer.eos_token_id());  // <|im_end|>
+    assert(instruct_tokens[instruct_tokens.size() - 1] == 198);  // \n
+
+    // Verify the inner text matches encode("Happy")
+    auto happy_tokens = tokenizer.encode("Happy");
+    size_t inner_start = 3;
+    size_t inner_end = instruct_tokens.size() - 2;
+    assert(inner_end - inner_start == happy_tokens.size());
+    for (size_t i = 0; i < happy_tokens.size(); i++) {
+        assert(instruct_tokens[inner_start + i] == happy_tokens[i]);
+    }
+    printf("  PASS: Instruct tokens have correct structure\n\n");
+
+    // Test 9: Encode empty instruct returns empty
+    printf("Test 9: Encode empty instruct\n");
+    auto empty_instruct = tokenizer.encode_instruct("");
+    assert(empty_instruct.empty());
+    printf("  PASS: Empty instruct returns empty vector\n\n");
+
     printf("=== All tests passed! ===\n");
     return 0;
 }

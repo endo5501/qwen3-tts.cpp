@@ -985,7 +985,9 @@ bool TTSTransformer::build_prefill_graph(const int32_t * text_tokens, int32_t n_
                                          const float * speaker_embd, int32_t language_id,
                                          std::vector<float> & prefill_embd,
                                          std::vector<float> & trailing_text_hidden,
-                                         std::vector<float> & tts_pad_embed) {
+                                         std::vector<float> & tts_pad_embed,
+                                         const int32_t * instruct_tokens,
+                                         int32_t n_instruct_tokens) {
     if (!text_tokens) {
         error_msg_ = "text_tokens is null";
         return false;
@@ -1094,11 +1096,36 @@ bool TTSTransformer::build_prefill_graph(const int32_t * text_tokens, int32_t n_
         first_text_plus_codec_bos[h] = first_text_embed[h] + codec_bos_embed[h];
     }
 
-    const int32_t prefill_len = 3 + codec_plus_overlay_len + 1;
+    // Project instruct tokens if provided (placed before role_embed)
+    std::vector<float> instruct_proj;
+    const int32_t instruct_len = (instruct_tokens && n_instruct_tokens > 0) ? n_instruct_tokens : 0;
+    if (instruct_len > 0) {
+        if (!project_text_tokens(instruct_tokens, n_instruct_tokens, instruct_proj)) {
+            return false;
+        }
+    }
+
+    const int32_t prefill_len = instruct_len + 3 + codec_plus_overlay_len + 1;
     prefill_embd.resize((size_t)prefill_len * hidden_size);
-    memcpy(prefill_embd.data(), role_embed.data(), role_embed.size() * sizeof(float));
-    memcpy(prefill_embd.data() + (size_t)3 * hidden_size,
+
+    int32_t offset = 0;
+
+    // Instruct embeddings (text_projection only, no codec overlay)
+    if (instruct_len > 0) {
+        memcpy(prefill_embd.data(), instruct_proj.data(), instruct_proj.size() * sizeof(float));
+        offset += instruct_len;
+    }
+
+    // Role embeddings (im_start, assistant, \n)
+    memcpy(prefill_embd.data() + (size_t)offset * hidden_size,
+           role_embed.data(), role_embed.size() * sizeof(float));
+    offset += 3;
+
+    // Codec + overlay
+    memcpy(prefill_embd.data() + (size_t)offset * hidden_size,
            codec_plus_overlay.data(), codec_plus_overlay.size() * sizeof(float));
+
+    // First text + codec BOS (last position)
     memcpy(prefill_embd.data() + (size_t)(prefill_len - 1) * hidden_size,
            first_text_plus_codec_bos.data(), hidden_size * sizeof(float));
 
@@ -2580,7 +2607,9 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
                                int32_t language_id,
                                float repetition_penalty,
                                float temperature,
-                               int32_t top_k) {
+                               int32_t top_k,
+                               const int32_t * instruct_tokens,
+                               int32_t n_instruct_tokens) {
 #ifdef QWEN3_TTS_TIMING
     using clk = std::chrono::high_resolution_clock;
     tts_timing timing = {};
@@ -2616,7 +2645,8 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
     t0 = clk::now();
 #endif
     if (!build_prefill_graph(text_tokens, n_tokens, speaker_embd, language_id,
-                             prefill_embd, trailing_text_hidden, tts_pad_embed)) {
+                             prefill_embd, trailing_text_hidden, tts_pad_embed,
+                             instruct_tokens, n_instruct_tokens)) {
         return false;
     }
 #ifdef QWEN3_TTS_TIMING

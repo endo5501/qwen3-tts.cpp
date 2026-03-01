@@ -27,6 +27,15 @@ QWEN3_TTS_API int qwen3_tts_synthesize_with_voice(qwen3_tts_ctx * ctx,
                                                     const char * text,
                                                     const char * ref_wav_path);
 
+// Synthesis with instruct (for CustomVoice model style control)
+QWEN3_TTS_API int qwen3_tts_synthesize_with_instruct(qwen3_tts_ctx * ctx,
+                                                       const char * text,
+                                                       const char * instruct);
+QWEN3_TTS_API int qwen3_tts_synthesize_with_voice_and_instruct(qwen3_tts_ctx * ctx,
+                                                                  const char * text,
+                                                                  const char * ref_wav_path,
+                                                                  const char * instruct);
+
 // Result access
 QWEN3_TTS_API const float * qwen3_tts_get_audio(const qwen3_tts_ctx * ctx);
 QWEN3_TTS_API int            qwen3_tts_get_audio_length(const qwen3_tts_ctx * ctx);

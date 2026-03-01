@@ -41,6 +41,8 @@ struct tts_params {
     // Language ID for codec (2050=en, 2069=ru, 2055=zh, 2058=ja, 2064=ko, 2053=de, 2061=fr, 2054=es)
     int32_t language_id = 2050;
 
+    // Instruct text for CustomVoice model (empty = no instruct)
+    std::string instruct;
 };
 
 // TTS generation result
