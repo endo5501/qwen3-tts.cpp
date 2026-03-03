@@ -289,6 +289,14 @@ bool TTSTransformer::parse_config(struct gguf_context * ctx) {
         "qwen3-tts.code_pred.vocab_size",
         "qwen3-tts.code_predictor.vocab_size",
     }, 2048);
+    cfg.code_pred_hidden_size = get_u32_any({
+        "qwen3-tts.code_pred.embedding_length",
+        "qwen3-tts.code_predictor.embedding_length",
+    }, 0);  // 0 = same as hidden_size
+    cfg.code_pred_intermediate_size = get_u32_any({
+        "qwen3-tts.code_pred.feed_forward_length",
+        "qwen3-tts.code_predictor.feed_forward_length",
+    }, 0);  // 0 = same as intermediate_size
 
     cfg.codec_pad_id = get_u32_any({
         "qwen3-tts.codec.pad_id",
@@ -345,7 +353,17 @@ bool TTSTransformer::parse_config(struct gguf_context * ctx) {
 
 bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
     const int64_t n_tensors = gguf_get_n_tensors(ctx);
-    const auto & cfg = model_.config;
+    auto & cfg = model_.config;
+
+    // Resolve code_pred sizes: 0 means same as talker
+    if (cfg.code_pred_hidden_size == 0) {
+        cfg.code_pred_hidden_size = cfg.hidden_size;
+    }
+    if (cfg.code_pred_intermediate_size == 0) {
+        cfg.code_pred_intermediate_size = cfg.intermediate_size;
+    }
+    const int32_t cp_hidden = cfg.code_pred_hidden_size;
+    const int32_t cp_intermediate = cfg.code_pred_intermediate_size;
     
     const size_t ctx_size = n_tensors * ggml_tensor_overhead();
     struct ggml_init_params params = {
@@ -461,11 +479,11 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
                 continue;
             }
             int layer_idx = -1;
-            if (sscanf(name, "code_pred.blk.%d.", &layer_idx) == 1 && 
+            if (sscanf(name, "code_pred.blk.%d.", &layer_idx) == 1 &&
                 layer_idx >= 0 && layer_idx < cfg.code_pred_layers) {
-                
+
                 if (strstr(name, "attn_norm.weight")) {
-                    ne[0] = cfg.hidden_size;
+                    ne[0] = cp_hidden;
                     n_dims = 1;
                 } else if (strstr(name, "attn_q_norm.weight")) {
                     ne[0] = cfg.head_dim;
@@ -474,35 +492,35 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
                     ne[0] = cfg.head_dim;
                     n_dims = 1;
                 } else if (strstr(name, "attn_q.weight")) {
-                    ne[0] = cfg.hidden_size;
+                    ne[0] = cp_hidden;
                     ne[1] = cfg.n_attention_heads * cfg.head_dim;
                     n_dims = 2;
                 } else if (strstr(name, "attn_k.weight")) {
-                    ne[0] = cfg.hidden_size;
+                    ne[0] = cp_hidden;
                     ne[1] = cfg.n_key_value_heads * cfg.head_dim;
                     n_dims = 2;
                 } else if (strstr(name, "attn_v.weight")) {
-                    ne[0] = cfg.hidden_size;
+                    ne[0] = cp_hidden;
                     ne[1] = cfg.n_key_value_heads * cfg.head_dim;
                     n_dims = 2;
                 } else if (strstr(name, "attn_output.weight")) {
                     ne[0] = cfg.n_attention_heads * cfg.head_dim;
-                    ne[1] = cfg.hidden_size;
+                    ne[1] = cp_hidden;
                     n_dims = 2;
                 } else if (strstr(name, "ffn_norm.weight")) {
-                    ne[0] = cfg.hidden_size;
+                    ne[0] = cp_hidden;
                     n_dims = 1;
                 } else if (strstr(name, "ffn_gate.weight")) {
-                    ne[0] = cfg.hidden_size;
-                    ne[1] = cfg.intermediate_size;
+                    ne[0] = cp_hidden;
+                    ne[1] = cp_intermediate;
                     n_dims = 2;
                 } else if (strstr(name, "ffn_up.weight")) {
-                    ne[0] = cfg.hidden_size;
-                    ne[1] = cfg.intermediate_size;
+                    ne[0] = cp_hidden;
+                    ne[1] = cp_intermediate;
                     n_dims = 2;
                 } else if (strstr(name, "ffn_down.weight")) {
-                    ne[0] = cfg.intermediate_size;
-                    ne[1] = cfg.hidden_size;
+                    ne[0] = cp_intermediate;
+                    ne[1] = cp_hidden;
                     n_dims = 2;
                 } else {
                     continue;
@@ -514,6 +532,7 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
             int cb_idx = -1;
             if (sscanf(name, "code_pred.codec_embd.%d.weight", &cb_idx) == 1 &&
                 cb_idx >= 0 && cb_idx < cfg.n_codebooks - 1) {
+                // codec_embd maps from vocab to the input space (talker hidden_size)
                 ne[0] = cfg.hidden_size;
                 ne[1] = cfg.code_pred_vocab_size;
                 n_dims = 2;
@@ -527,7 +546,7 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
              int cb_idx = -1;
              if (sscanf(name, "code_pred.lm_head.%d.weight", &cb_idx) == 1 &&
                  cb_idx >= 0 && cb_idx < cfg.n_codebooks - 1) {
-                 ne[0] = cfg.hidden_size;
+                 ne[0] = cp_hidden;
                  ne[1] = cfg.code_pred_vocab_size;
                  n_dims = 2;
              } else {
@@ -537,7 +556,15 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
              if (skip_ggml_code_pred_layers_) {
                  continue;
              }
-             ne[0] = cfg.hidden_size;
+             ne[0] = cp_hidden;
+             n_dims = 1;
+         } else if (strstr(name, "code_pred.mtp_proj.weight")) {
+             // Projects from talker hidden_size to code_pred hidden_size
+             ne[0] = cfg.hidden_size;  // input: talker hidden
+             ne[1] = cp_hidden;        // output: code_pred hidden
+             n_dims = 2;
+         } else if (strstr(name, "code_pred.mtp_proj.bias")) {
+             ne[0] = cp_hidden;
              n_dims = 1;
          } else {
              continue;
@@ -615,9 +642,25 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
              }
          } else if (strstr(name, "code_pred.output_norm.weight")) {
              model_.code_pred_output_norm = tensor;
+         } else if (strstr(name, "code_pred.mtp_proj.weight")) {
+             model_.mtp_proj_weight = tensor;
+         } else if (strstr(name, "code_pred.mtp_proj.bias")) {
+             model_.mtp_proj_bias = tensor;
          }
      }
-     
+
+     // Validate MTP projection consistency
+     const bool has_mtp_w = model_.mtp_proj_weight != nullptr;
+     const bool has_mtp_b = model_.mtp_proj_bias != nullptr;
+     if (has_mtp_w != has_mtp_b) {
+         error_msg_ = "Invalid model: code_pred.mtp_proj weight/bias mismatch";
+         return false;
+     }
+     if (cfg.code_pred_hidden_size != cfg.hidden_size && !has_mtp_w) {
+         error_msg_ = "Invalid model: code_pred hidden_size differs from talker but mtp_proj is missing";
+         return false;
+     }
+
      return true;
  }
 
@@ -1412,6 +1455,13 @@ struct ggml_cgraph * TTSTransformer::build_step_graph(int32_t n_past) {
 
 struct ggml_cgraph * TTSTransformer::build_code_pred_graph(int32_t n_prev_codes) {
     const auto & cfg = model_.config;
+
+    // This legacy path does not support MTP projection (1.7B models)
+    if (cfg.code_pred_hidden_size != cfg.hidden_size) {
+        error_msg_ = "build_code_pred_graph() does not support separated code predictor hidden size; use autoregressive path";
+        return nullptr;
+    }
+
     const int n_head = cfg.n_attention_heads;
     const int n_kv_head = cfg.n_key_value_heads;
     const int head_dim = cfg.head_dim;
@@ -1537,39 +1587,46 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_prefill_graph() {
     const int n_kv_head = cfg.n_key_value_heads;
     const int head_dim = cfg.head_dim;
     const int hidden_size = cfg.hidden_size;
+    const int cp_hidden = cfg.code_pred_hidden_size;
     const float eps = cfg.rms_norm_eps;
     const float rope_theta = cfg.rope_theta;
     const int n_layer = cfg.code_pred_layers;
     const int n_tokens = 2;
-    
+
     struct ggml_init_params params = {
         /*.mem_size   =*/ state_.compute_meta.size(),
         /*.mem_buffer =*/ state_.compute_meta.data(),
         /*.no_alloc   =*/ true,
     };
-    
+
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, QWEN3_TTS_MAX_NODES, false);
-    
+
     // Input: past_hidden from talker [hidden_size]
     struct ggml_tensor * inp_hidden = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_size);
     ggml_set_name(inp_hidden, "inp_hidden");
     ggml_set_input(inp_hidden);
-    
+
     // Input: codebook 0 token embedding [hidden_size] (pre-computed using talker's codec_embd)
     struct ggml_tensor * inp_cb0_embd = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_size);
     ggml_set_name(inp_cb0_embd, "inp_cb0_embd");
     ggml_set_input(inp_cb0_embd);
-    
+
     struct ggml_tensor * inp_pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
     ggml_set_name(inp_pos, "inp_pos");
     ggml_set_input(inp_pos);
-    
-    // Concatenate [past_hidden, cb0_embd] -> [2, hidden_size]
+
+    // Concatenate [past_hidden, cb0_embd] -> [hidden_size, 2]
     struct ggml_tensor * hidden_2d = ggml_reshape_2d(ctx0, inp_hidden, hidden_size, 1);
     struct ggml_tensor * cb0_2d = ggml_reshape_2d(ctx0, inp_cb0_embd, hidden_size, 1);
     struct ggml_tensor * cur = ggml_concat(ctx0, hidden_2d, cb0_2d, 1);
-    
+
+    // Apply MTP projection if needed (1.7B: hidden_size -> cp_hidden)
+    if (model_.mtp_proj_weight) {
+        cur = ggml_mul_mat(ctx0, model_.mtp_proj_weight, cur);  // [cp_hidden, 2]
+        cur = ggml_add(ctx0, cur, model_.mtp_proj_bias);
+    }
+
     struct ggml_tensor * inpL = cur;
     
     const float KQscale = 1.0f / sqrtf(float(head_dim));
@@ -1661,17 +1718,18 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_prefill_graph() {
      cur = ggml_rms_norm(ctx0, cur, eps);
      cur = ggml_mul(ctx0, cur, model_.code_pred_output_norm);
      
-     struct ggml_tensor * last_hidden = ggml_view_2d(ctx0, cur, hidden_size, 1, 
-                                                      cur->nb[1], hidden_size * sizeof(float));
-     
+     // Extract last token's hidden state [cp_hidden]
+     struct ggml_tensor * last_hidden = ggml_view_2d(ctx0, cur, cp_hidden, 1,
+                                                      cur->nb[1], (int64_t)cp_hidden * sizeof(float));
+
      struct ggml_tensor * logits = ggml_mul_mat(ctx0, model_.code_pred_head[0], last_hidden);
     ggml_set_name(logits, "logits");
     ggml_set_output(logits);
-    
+
     ggml_build_forward_expand(gf, logits);
-    
+
     ggml_free(ctx0);
-    
+
     return gf;
 }
 
@@ -1685,34 +1743,40 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_step_graph(int32_t n_past, 
     const float rope_theta = cfg.rope_theta;
     const int n_layer = cfg.code_pred_layers;
     const int n_tokens = 1;
-    
+
     struct ggml_init_params params = {
         /*.mem_size   =*/ state_.compute_meta.size(),
         /*.mem_buffer =*/ state_.compute_meta.data(),
         /*.no_alloc   =*/ true,
     };
-    
+
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, QWEN3_TTS_MAX_NODES, false);
-    
+
+    // inp_hidden is [hidden_size] (talker's dimension), used only for generation_step == 0
     struct ggml_tensor * inp_hidden = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_size);
     ggml_set_name(inp_hidden, "inp_hidden");
     ggml_set_input(inp_hidden);
-    
+
     struct ggml_tensor * inp_code = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 1);
     ggml_set_name(inp_code, "inp_code");
     ggml_set_input(inp_code);
-    
+
     struct ggml_tensor * inp_pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 1);
     ggml_set_name(inp_pos, "inp_pos");
     ggml_set_input(inp_pos);
-    
+
     struct ggml_tensor * cur;
     if (generation_step == 0) {
         cur = ggml_reshape_2d(ctx0, inp_hidden, hidden_size, 1);
     } else {
         cur = ggml_get_rows(ctx0, model_.code_pred_embd[generation_step - 1], inp_code);
         cur = ggml_reshape_2d(ctx0, cur, hidden_size, 1);
+    }
+    // Apply MTP projection if needed (1.7B: hidden_size -> cp_hidden)
+    if (model_.mtp_proj_weight) {
+        cur = ggml_mul_mat(ctx0, model_.mtp_proj_weight, cur);  // [cp_hidden, 1]
+        cur = ggml_add(ctx0, cur, model_.mtp_proj_bias);
     }
     
     struct ggml_tensor * inpL = cur;
@@ -2879,6 +2943,17 @@ void free_transformer_model(tts_transformer_model & model) {
     model.code_pred_layers.clear();
     model.code_pred_embd.clear();
     model.code_pred_head.clear();
+    model.text_embd = nullptr;
+    model.text_proj_fc1 = nullptr;
+    model.text_proj_fc1_bias = nullptr;
+    model.text_proj_fc2 = nullptr;
+    model.text_proj_fc2_bias = nullptr;
+    model.codec_embd = nullptr;
+    model.output_norm = nullptr;
+    model.codec_head = nullptr;
+    model.code_pred_output_norm = nullptr;
+    model.mtp_proj_weight = nullptr;
+    model.mtp_proj_bias = nullptr;
 }
 
 void free_tts_kv_cache(tts_kv_cache & cache) {

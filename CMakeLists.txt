@@ -221,6 +221,28 @@ add_executable(qwen3-tts-cli
 target_link_libraries(qwen3-tts-cli PRIVATE
     qwen3_tts
 )
+target_link_directories(qwen3-tts-cli PRIVATE
+    ${GGML_BUILD_DIR}/src/ggml-metal
+    ${GGML_BUILD_DIR}/src/ggml-blas
+)
+if(APPLE)
+    target_link_libraries(qwen3-tts-cli PRIVATE
+        "-framework Accelerate"
+        "-framework Foundation"
+    )
+    if(GGML_METAL)
+        target_link_libraries(qwen3-tts-cli PRIVATE
+            ggml-metal
+            "-framework Metal"
+            "-framework MetalKit"
+        )
+    endif()
+    if(EXISTS "${GGML_BUILD_DIR}/src/ggml-blas/libggml-blas.a")
+        target_link_libraries(qwen3-tts-cli PRIVATE
+            ggml-blas
+        )
+    endif()
+endif()
 
 # Test executable for tokenizer
 add_executable(test_tokenizer

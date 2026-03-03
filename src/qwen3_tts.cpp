@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <filesystem>
 #include <cstdint>
 #include <cstdlib>
 #include <algorithm>
@@ -144,9 +145,57 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     transformer_.unload_model();
     audio_decoder_.unload_model();
 
-    // Construct model paths
-    tts_model_path_      = model_dir + "/qwen3-tts-0.6b-f16.gguf";
-    decoder_model_path_  = model_dir + "/qwen3-tts-tokenizer-f16.gguf";
+    // Dynamically detect model files in the directory
+    // TTS model: qwen3-tts-*.gguf (excluding files containing "tokenizer")
+    // Vocoder:   qwen3-tts-tokenizer*.gguf
+    std::vector<std::string> tts_candidates;
+    std::vector<std::string> vocoder_candidates;
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        for (const auto & entry : fs::directory_iterator(model_dir, ec)) {
+            std::error_code fec;
+            if (!entry.is_regular_file(fec) || fec) continue;
+            const auto path = entry.path();
+            if (path.extension() != ".gguf") continue;
+            const std::string fname = path.filename().string();
+            if (fname.find("qwen3-tts-") != 0) continue;
+
+            if (fname.find("tokenizer") != std::string::npos) {
+                vocoder_candidates.push_back(path.string());
+            } else {
+                tts_candidates.push_back(path.string());
+            }
+        }
+        if (ec) {
+            error_msg_ = "Failed to scan model directory: " + ec.message();
+            return false;
+        }
+    }
+    if (tts_candidates.empty()) {
+        error_msg_ = "No TTS model file (qwen3-tts-*.gguf) found in " + model_dir;
+        return false;
+    }
+    if (tts_candidates.size() > 1) {
+        error_msg_ = "Multiple TTS model files found in " + model_dir + " (expected exactly one):";
+        for (const auto & p : tts_candidates) {
+            error_msg_ += "\n  " + p;
+        }
+        return false;
+    }
+    if (vocoder_candidates.empty()) {
+        error_msg_ = "No vocoder file (qwen3-tts-tokenizer*.gguf) found in " + model_dir;
+        return false;
+    }
+    if (vocoder_candidates.size() > 1) {
+        error_msg_ = "Multiple vocoder files found in " + model_dir + " (expected exactly one):";
+        for (const auto & p : vocoder_candidates) {
+            error_msg_ += "\n  " + p;
+        }
+        return false;
+    }
+    tts_model_path_      = tts_candidates[0];
+    decoder_model_path_  = vocoder_candidates[0];
     encoder_loaded_      = false;
     transformer_loaded_  = false;
     decoder_loaded_      = false;
