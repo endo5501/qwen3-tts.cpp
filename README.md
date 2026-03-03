@@ -4,17 +4,21 @@
 
 **Benchmark Snapshot (PyTorch vs qwen3-tts.cpp):** Basic 3.19x faster, Clone 4.07x faster. Peak RSS delta: Basic +19.0%, Clone +7.7%.
 
-C++ inference for [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) using the [GGML](https://github.com/ggml-org/ggml) tensor library.
+C++ inference for [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) using the [GGML](https://github.com/ggml-org/ggml) tensor library. Supports both 0.6B and 1.7B model variants.
 
 Runs the full TTS pipeline in pure C++17, including text tokenization, speaker encoding, transformer code generation, and vocoder decoding, without Python or PyTorch at inference time.
 
 ## Features
 
 - Full text-to-speech pipeline in C++17 with GGML backend
-- Voice cloning from reference audio (ECAPA-TDNN x-vector extraction)
+- Supports both 0.6B and 1.7B model variants (automatic detection)
+- Multi-language synthesis (en, zh, ja, ko, ru, de, fr, es, it, pt)
+- Voice cloning from reference audio (WAV/MP3, ECAPA-TDNN x-vector extraction)
 - Greedy and sampled decoding (temperature, top-k, repetition penalty)
 - GGUF model format (F16 and Q8_0 quantization)
+- C API / shared library for FFI integration (e.g. Flutter)
 - Runtime backend selection with GPU/Metal preference and CPU fallback
+- Optional CoreML code predictor acceleration on macOS
 - Deterministic reference tests comparing C++ output against Python
 - Compile-time timing instrumentation with zero overhead in normal builds
 
@@ -70,11 +74,13 @@ python scripts/setup_pipeline_models.py
   -o examples/readme_example_clone.wav
 ```
 
-Expected model artifacts after step 5:
+Expected model artifacts after step 5 (0.6B example):
 
-- `models/qwen3-tts-0.6b-f16.gguf`
-- `models/qwen3-tts-tokenizer-f16.gguf`
-- `models/coreml/code_predictor.mlpackage` (on macOS)
+- `models/qwen3-tts-0.6b-f16.gguf` (TTS model)
+- `models/qwen3-tts-tokenizer-f16.gguf` (vocoder)
+- `models/coreml/code_predictor.mlpackage` (on macOS, optional)
+
+The CLI auto-detects model files in the given directory: any `qwen3-tts-*.gguf` (excluding "tokenizer") as TTS model, and `qwen3-tts-tokenizer*.gguf` as vocoder. Place exactly one of each per directory.
 
 Expected audio outputs after steps 6-7:
 
@@ -132,10 +138,10 @@ Useful flags:
 
 ## Manual Model Conversion (Advanced)
 
-Convert HuggingFace models to GGUF format:
+Convert HuggingFace models to GGUF format. The conversion scripts support both 0.6B and 1.7B variants:
 
 ```bash
-# Download the model
+# Download a model (0.6B or 1.7B)
 huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-Base \
     --local-dir models/Qwen3-TTS-12Hz-0.6B-Base
 
@@ -144,13 +150,13 @@ python scripts/convert_tts_to_gguf.py \
     models/Qwen3-TTS-12Hz-0.6B-Base \
     models/qwen3-tts-0.6b-f16.gguf
 
-# Convert vocoder (audio decoder)
+# Convert vocoder (audio decoder) - shared across model sizes
 python scripts/convert_tokenizer_to_gguf.py \
     models/Qwen3-TTS-12Hz-0.6B-Base \
     models/qwen3-tts-tokenizer-f16.gguf
 ```
 
-Place both `.gguf` files in a `models/` directory.
+Place both `.gguf` files in a model directory (e.g. `models/0.6b/` or `models/1.7b/`). The CLI auto-detects model files by filename pattern.
 
 ## Usage
 
@@ -158,7 +164,10 @@ Place both `.gguf` files in a `models/` directory.
 # Basic synthesis
 ./build/qwen3-tts-cli -m models -t "Hello, world!" -o hello.wav
 
-# Voice cloning from reference audio
+# Japanese synthesis
+./build/qwen3-tts-cli -m models -t "こんにちは" -l ja -o hello_ja.wav
+
+# Voice cloning from reference audio (WAV or MP3)
 ./build/qwen3-tts-cli -m models -t "Hello! How are you?" -r reference.wav -o cloned.wav
 
 # Greedy decoding with max length
@@ -173,7 +182,8 @@ Place both `.gguf` files in a `models/` directory.
 | `-m, --model <dir>` | Model directory containing GGUF files | (required) |
 | `-t, --text <text>` | Text to synthesize | (required) |
 | `-o, --output <file>` | Output WAV file path | `output.wav` |
-| `-r, --reference <file>` | Reference audio for voice cloning | (none) |
+| `-r, --reference <file>` | Reference audio for voice cloning (WAV or MP3) | (none) |
+| `-l, --language <lang>` | Language: en, ru, zh, ja, ko, de, fr, es, it, pt | `en` |
 | `--temperature <val>` | Sampling temperature (0 = greedy) | 0.9 |
 | `--top-k <n>` | Top-k sampling (0 = disabled) | 50 |
 | `--top-p <val>` | Top-p sampling | 1.0 |
@@ -183,8 +193,14 @@ Place both `.gguf` files in a `models/` directory.
 
 `--top-p` is currently parsed by the CLI but not yet wired into transformer sampling.
 
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `QWEN3_TTS_USE_COREML=0` | Disable CoreML code predictor (macOS) |
+| `QWEN3_TTS_LOW_MEM=1` | Enable low-memory mode (lazy decoder loading + component unloads) |
+
 On macOS, CoreML code predictor is enabled by default when `models/coreml/code_predictor.mlpackage` exists.
-Set `QWEN3_TTS_USE_COREML=0` to disable it. Low-memory mode is opt-in via `QWEN3_TTS_LOW_MEM=1`.
 
 ### Backend Selection
 
@@ -212,9 +228,11 @@ speech codes ──► [Vocoder] ──► audio waveform (24kHz)
 |------|-----------|-------------|
 | `text_tokenizer.{h,cpp}` | Tokenizer | BPE text tokenizer from GGUF |
 | `audio_tokenizer_encoder.{h,cpp}` | Speaker Encoder | ECAPA-TDNN x-vector extractor |
-| `tts_transformer.{h,cpp}` | TTS Transformer | 28-layer Qwen2 talker + 5-layer code predictor |
+| `tts_transformer.{h,cpp}` | TTS Transformer | Qwen2 talker + code predictor (0.6B/1.7B) |
 | `audio_tokenizer_decoder.{h,cpp}` | Vocoder | WavTokenizer decoder (codes to waveform) |
+| `coreml_code_predictor.{h,mm}` | CoreML Bridge | Optional CoreML code predictor (macOS) |
 | `qwen3_tts.{h,cpp}` | Pipeline | Full pipeline orchestration |
+| `qwen3_tts_c_api.{h,cpp}` | C API | C wrapper / shared library for FFI |
 | `main.cpp` | CLI | Command-line interface |
 | `gguf_loader.{h,cpp}` | GGUF | Model loading utilities |
 
@@ -222,8 +240,16 @@ speech codes ──► [Vocoder] ──► audio waveform (24kHz)
 
 The transformer generates speech codes in two stages per frame:
 
-1. **Talker** (28 layers, 16 heads, 1024 hidden) produces a hidden state and codebook-0 logits.
+1. **Talker** produces a hidden state and codebook-0 logits.
 2. **Code Predictor** (5 layers) autoregressively generates codebooks 1-15 from that hidden state.
+
+| | 0.6B | 1.7B |
+|---|------|------|
+| Talker layers | 28 | 28 |
+| Talker hidden | 1024 | 2048 |
+| Code pred hidden | 1024 (shared) | 1024 (via MTP projection) |
+
+The 1.7B model uses a linear projection (MTP) to bridge the talker hidden dimension (2048) to the code predictor hidden dimension (1024).
 
 The prefill embedding mirrors the Python pipeline exactly:
 - Positions 0-2: text-projected role tokens (`<|im_start|>`, `assistant`, `\n`)
