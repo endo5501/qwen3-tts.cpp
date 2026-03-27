@@ -219,8 +219,6 @@ private:
                                               int upsample_rate,
                                               int block_idx);
     
-    void normalize_codebooks();
-    
     audio_decoder_model model_;
     audio_decoder_state state_;
     std::string error_msg_;

@@ -187,15 +187,43 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
         error_msg_ = "No vocoder file (qwen3-tts-tokenizer*.gguf) found in " + model_dir;
         return false;
     }
-    if (vocoder_candidates.size() > 1) {
-        error_msg_ = "Multiple vocoder files found in " + model_dir + " (expected exactly one):";
+    // Prefer Q8_0 tokenizer over F16 for reduced memory usage.
+    // Priority: q8_0 > f16 > single unknown file. Error if multiple of same type.
+    tts_model_path_ = tts_candidates[0];
+    {
+        std::vector<std::string> q8_candidates;
+        std::vector<std::string> f16_candidates;
         for (const auto & p : vocoder_candidates) {
-            error_msg_ += "\n  " + p;
+            const std::string fname = std::filesystem::path(p).filename().string();
+            if (fname.find("q8_0") != std::string::npos) {
+                q8_candidates.push_back(p);
+            } else if (fname.find("f16") != std::string::npos) {
+                f16_candidates.push_back(p);
+            }
         }
-        return false;
+        auto fail_multiple = [&](const char * label, const std::vector<std::string> & v) -> bool {
+            if (v.size() <= 1) return false;
+            error_msg_ = std::string("Multiple ") + label + " vocoder files found in " + model_dir + ":";
+            for (const auto & p : v) error_msg_ += "\n  " + p;
+            return true;
+        };
+        if (fail_multiple("Q8_0", q8_candidates) || fail_multiple("F16", f16_candidates)) {
+            return false;
+        }
+        if (!q8_candidates.empty()) {
+            decoder_model_path_ = q8_candidates[0];
+        } else if (!f16_candidates.empty()) {
+            decoder_model_path_ = f16_candidates[0];
+        } else if (vocoder_candidates.size() == 1) {
+            decoder_model_path_ = vocoder_candidates[0];
+        } else {
+            error_msg_ = "Multiple vocoder files found in " + model_dir + " (expected exactly one):";
+            for (const auto & p : vocoder_candidates) {
+                error_msg_ += "\n  " + p;
+            }
+            return false;
+        }
     }
-    tts_model_path_      = tts_candidates[0];
-    decoder_model_path_  = vocoder_candidates[0];
     encoder_loaded_      = false;
     transformer_loaded_  = false;
     decoder_loaded_      = false;
