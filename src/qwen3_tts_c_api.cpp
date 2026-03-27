@@ -45,7 +45,7 @@ int qwen3_tts_synthesize(qwen3_tts_ctx * ctx, const char * text) {
 
     qwen3_tts::tts_params params;
     params.print_progress = false;
-    params.print_timing   = false;
+    params.print_timing   = true;
     params.language_id    = ctx->language_id;
 
     ctx->last_result = ctx->tts.synthesize(text, params);
@@ -64,7 +64,7 @@ int qwen3_tts_synthesize_with_voice(qwen3_tts_ctx * ctx,
 
     qwen3_tts::tts_params params;
     params.print_progress = false;
-    params.print_timing   = false;
+    params.print_timing   = true;
     params.language_id    = ctx->language_id;
 
     ctx->last_result = ctx->tts.synthesize_with_voice(text, ref_wav_path, params);
