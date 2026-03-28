@@ -1,6 +1,7 @@
 #include "qwen3_tts_c_api.h"
 #include "qwen3_tts.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -33,7 +34,13 @@ struct qwen3_tts_ctx {
     qwen3_tts::tts_result  last_result;
     std::string            last_error;
     int32_t                language_id = 2058; // Japanese
+    std::atomic<bool>      abort_flag{false};
 };
+
+static bool abort_callback(void * data) {
+    auto * ctx = static_cast<qwen3_tts_ctx *>(data);
+    return ctx->abort_flag.load(std::memory_order_acquire);
+}
 
 qwen3_tts_ctx * qwen3_tts_init(const char * model_dir, int n_threads) {
     auto * ctx = new (std::nothrow) qwen3_tts_ctx();
@@ -48,6 +55,10 @@ qwen3_tts_ctx * qwen3_tts_init(const char * model_dir, int n_threads) {
     }
 
     (void)n_threads; // stored in tts_params at synthesis time
+
+    // Install abort callback once so abort flag is checked during all synthesis.
+    ctx->tts.set_abort_callback(abort_callback, ctx);
+
     return ctx;
 }
 
@@ -63,6 +74,16 @@ void qwen3_tts_free(qwen3_tts_ctx * ctx) {
 void qwen3_tts_set_language(qwen3_tts_ctx * ctx, int language_id) {
     if (!ctx) return;
     ctx->language_id = language_id;
+}
+
+void qwen3_tts_abort(qwen3_tts_ctx * ctx) {
+    if (!ctx) return;
+    ctx->abort_flag.store(true, std::memory_order_release);
+}
+
+void qwen3_tts_reset_abort(qwen3_tts_ctx * ctx) {
+    if (!ctx) return;
+    ctx->abort_flag.store(false, std::memory_order_release);
 }
 
 int qwen3_tts_synthesize(qwen3_tts_ctx * ctx, const char * text) {

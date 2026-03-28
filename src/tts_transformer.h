@@ -273,8 +273,14 @@ public:
                   int32_t top_k = 50);
     
     const tts_transformer_config & get_config() const { return model_.config; }
-    
+
     const std::string & get_error() const { return error_msg_; }
+
+    // Set abort callback checked before each graph compute (thread-safe)
+    void set_abort_callback(ggml_abort_callback callback, void * data);
+
+    // Check if abort has been requested
+    bool is_aborted() const;
     
     // Legacy interface for compatibility
     bool forward(const int32_t * tokens, int32_t n_tokens, int32_t n_past,
@@ -335,6 +341,8 @@ private:
     tts_transformer_model model_;
     tts_transformer_state state_;
     std::string error_msg_;
+    ggml_abort_callback abort_cb_ = nullptr;
+    void * abort_data_ = nullptr;
     
     // Cached hidden states from last forward pass
     std::vector<float> last_hidden_;

@@ -128,10 +128,14 @@ public:
 
     // Set progress callback
     void set_progress_callback(tts_progress_callback_t callback);
-    
+
+    // Set abort callback on all loaded component backends (thread-safe).
+    // The callback is stored and automatically re-applied after lazy load/reload.
+    void set_abort_callback(ggml_abort_callback callback, void * data);
+
     // Get error message
     const std::string & get_error() const { return error_msg_; }
-    
+
     // Check if models are loaded
     bool is_loaded() const { return models_loaded_; }
     
@@ -140,6 +144,8 @@ private:
                                    const float * speaker_embedding,
                                    const tts_params & params,
                                    tts_result & result);
+
+    bool is_aborted() const { return abort_cb_ && abort_cb_(abort_data_); }
     
     TextTokenizer tokenizer_;
     TTSTransformer transformer_;
@@ -155,6 +161,8 @@ private:
     std::string tts_model_path_;
     std::string decoder_model_path_;
     tts_progress_callback_t progress_callback_;
+    ggml_abort_callback abort_cb_ = nullptr;
+    void * abort_data_ = nullptr;
 };
 
 // Utility: Load audio file (WAV format)

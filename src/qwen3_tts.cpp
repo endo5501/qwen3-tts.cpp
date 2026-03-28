@@ -358,6 +358,7 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
             result.error_msg = "Failed to load speaker encoder: " + audio_encoder_.get_error();
             return result;
         }
+        audio_encoder_.set_abort_callback(abort_cb_, abort_data_);
         encoder_loaded_ = true;
         if (params.print_timing) {
             fprintf(stderr, "  Speaker encoder lazy-loaded in %lld ms\n",
@@ -365,10 +366,10 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
             log_memory_usage("voice/after-encoder-load");
         }
     }
-    
+
     int64_t t_encode_start = get_time_ms();
     std::vector<float> speaker_embedding;
-    
+
     if (!audio_encoder_.encode(ref_samples, n_ref_samples, speaker_embedding)) {
         result.error_msg = "Failed to extract speaker embedding: " + audio_encoder_.get_error();
         return result;
@@ -412,6 +413,7 @@ bool Qwen3TTS::extract_speaker_embedding(const std::string & reference_audio,
             error_msg_ = "Failed to load speaker encoder: " + audio_encoder_.get_error();
             return false;
         }
+        audio_encoder_.set_abort_callback(abort_cb_, abort_data_);
         encoder_loaded_ = true;
     }
 
@@ -508,6 +510,7 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
             result.error_msg = "Failed to reload TTS transformer: " + transformer_.get_error();
             return result;
         }
+        transformer_.set_abort_callback(abort_cb_, abort_data_);
         transformer_loaded_ = true;
         if (params.print_timing) {
             fprintf(stderr, "  Transformer reloaded in %lld ms\n",
@@ -527,7 +530,12 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
     }
     result.t_generate_ms = get_time_ms() - t_generate_start;
     sample_memory("synth/after-generate");
-    
+
+    if (is_aborted()) {
+        result.error_msg = "Aborted";
+        return result;
+    }
+
     int n_codebooks = transformer_.get_config().n_codebooks;
     int n_frames = (int)speech_codes.size() / n_codebooks;
     
@@ -558,6 +566,7 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
             result.error_msg = "Failed to load vocoder: " + audio_decoder_.get_error();
             return result;
         }
+        audio_decoder_.set_abort_callback(abort_cb_, abort_data_);
         decoder_loaded_ = true;
         if (params.print_timing) {
             fprintf(stderr, "  Vocoder lazy-loaded in %lld ms\n",
@@ -616,6 +625,14 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
 
 void Qwen3TTS::set_progress_callback(tts_progress_callback_t callback) {
     progress_callback_ = callback;
+}
+
+void Qwen3TTS::set_abort_callback(ggml_abort_callback callback, void * data) {
+    abort_cb_ = callback;
+    abort_data_ = data;
+    transformer_.set_abort_callback(callback, data);
+    audio_encoder_.set_abort_callback(callback, data);
+    audio_decoder_.set_abort_callback(callback, data);
 }
 
 // Mix an interleaved multi-channel buffer down to mono, storing results in `out`.

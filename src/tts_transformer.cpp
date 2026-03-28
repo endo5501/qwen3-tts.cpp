@@ -1,5 +1,6 @@
 #include "tts_transformer.h"
 #include "gguf_loader.h"
+#include "ggml-cpu.h"
 
 #include <cmath>
 #include <cstring>
@@ -2730,6 +2731,10 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
     std::vector<float> embd_row(cfg.hidden_size);
     
     for (int frame = 0; frame < max_len; ++frame) {
+        if (is_aborted()) {
+            error_msg_ = "Aborted";
+            return false;
+        }
         // Suppress tokens in [codec_vocab_size - 1024, codec_vocab_size), except codec_eos_id
         for (int32_t i = suppress_start; i < cfg.codec_vocab_size; ++i) {
             if (i != cfg.codec_eos_id) {
@@ -2973,6 +2978,18 @@ void free_tts_kv_cache(tts_kv_cache & cache) {
     cache.v_cache.clear();
     cache.n_ctx = 0;
     cache.n_used = 0;
+}
+
+void TTSTransformer::set_abort_callback(ggml_abort_callback callback, void * data) {
+    abort_cb_ = callback;
+    abort_data_ = data;
+    if (state_.backend_cpu) {
+        ggml_backend_cpu_set_abort_callback(state_.backend_cpu, callback, data);
+    }
+}
+
+bool TTSTransformer::is_aborted() const {
+    return abort_cb_ && abort_cb_(abort_data_);
 }
 
 } // namespace qwen3_tts

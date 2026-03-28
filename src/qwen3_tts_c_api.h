@@ -21,6 +21,10 @@ QWEN3_TTS_API void             qwen3_tts_free(qwen3_tts_ctx * ctx);
 // Configuration
 QWEN3_TTS_API void qwen3_tts_set_language(qwen3_tts_ctx * ctx, int language_id);
 
+// Abort (thread-safe, can be called from any thread)
+QWEN3_TTS_API void qwen3_tts_abort(qwen3_tts_ctx * ctx);
+QWEN3_TTS_API void qwen3_tts_reset_abort(qwen3_tts_ctx * ctx);
+
 // Synthesis (results stored internally; 0 = success, -1 = error)
 QWEN3_TTS_API int qwen3_tts_synthesize(qwen3_tts_ctx * ctx, const char * text);
 QWEN3_TTS_API int qwen3_tts_synthesize_with_voice(qwen3_tts_ctx * ctx,
