@@ -382,6 +382,72 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
     return synthesize_internal(text, speaker_embedding.data(), params, result);
 }
 
+bool Qwen3TTS::extract_speaker_embedding(const std::string & reference_audio,
+                                           std::vector<float> & embedding) {
+    if (!models_loaded_) {
+        error_msg_ = "Models not loaded";
+        return false;
+    }
+
+    std::vector<float> ref_samples;
+    int ref_sample_rate;
+    if (!load_audio_file(reference_audio, ref_samples, ref_sample_rate)) {
+        error_msg_ = "Failed to load reference audio: " + reference_audio;
+        return false;
+    }
+
+    const int target_rate = 24000;
+    if (ref_sample_rate != target_rate) {
+        std::vector<float> resampled;
+        resample_linear(ref_samples.data(), (int)ref_samples.size(), ref_sample_rate, resampled, target_rate);
+        ref_samples = std::move(resampled);
+    }
+
+    if (!encoder_loaded_) {
+        if (tts_model_path_.empty()) {
+            error_msg_ = "Internal error: missing TTS model path for lazy encoder load";
+            return false;
+        }
+        if (!audio_encoder_.load_model(tts_model_path_)) {
+            error_msg_ = "Failed to load speaker encoder: " + audio_encoder_.get_error();
+            return false;
+        }
+        encoder_loaded_ = true;
+    }
+
+    if (!audio_encoder_.encode(ref_samples.data(), (int32_t)ref_samples.size(), embedding)) {
+        error_msg_ = "Failed to extract speaker embedding: " + audio_encoder_.get_error();
+        return false;
+    }
+
+    return true;
+}
+
+tts_result Qwen3TTS::synthesize_with_embedding(const std::string & text,
+                                                 const float * embedding, int32_t embedding_size,
+                                                 const tts_params & params) {
+    tts_result result;
+
+    if (!models_loaded_) {
+        result.error_msg = "Models not loaded";
+        return result;
+    }
+
+    if (!embedding) {
+        result.error_msg = "Speaker embedding is null";
+        return result;
+    }
+
+    const int32_t expected_size = transformer_.get_config().hidden_size;
+    if (embedding_size != expected_size) {
+        result.error_msg = "Invalid embedding size: expected " + std::to_string(expected_size)
+                         + ", got " + std::to_string(embedding_size);
+        return result;
+    }
+
+    return synthesize_internal(text, embedding, params, result);
+}
+
 tts_result Qwen3TTS::synthesize_internal(const std::string & text,
                                           const float * speaker_embedding,
                                           const tts_params & params,

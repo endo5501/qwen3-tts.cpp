@@ -110,7 +110,22 @@ public:
     tts_result synthesize_with_voice(const std::string & text,
                                       const float * ref_samples, int32_t n_ref_samples,
                                       const tts_params & params = tts_params());
-    
+
+    // Extract speaker embedding from reference audio file (without synthesis)
+    // reference_audio: path to reference audio file (WAV or MP3)
+    // embedding: output vector of 1024 float32 values
+    bool extract_speaker_embedding(const std::string & reference_audio,
+                                    std::vector<float> & embedding);
+
+    // Generate speech with pre-extracted speaker embedding
+    // text: input text to synthesize
+    // embedding: pre-extracted speaker embedding (1024 float32 values)
+    // embedding_size: number of elements in embedding (must be 1024)
+    // params: generation parameters
+    tts_result synthesize_with_embedding(const std::string & text,
+                                          const float * embedding, int32_t embedding_size,
+                                          const tts_params & params = tts_params());
+
     // Set progress callback
     void set_progress_callback(tts_progress_callback_t callback);
     
