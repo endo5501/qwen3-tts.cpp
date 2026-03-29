@@ -243,6 +243,25 @@ if(APPLE)
         )
     endif()
 endif()
+if(WIN32)
+    find_library(GGML_VULKAN_LIB_CLI
+        NAMES ggml-vulkan
+        PATHS "${GGML_BUILD_DIR}/src/ggml-vulkan"
+        PATH_SUFFIXES Release Debug RelWithDebInfo MinSizeRel
+        NO_DEFAULT_PATH
+    )
+    if(GGML_VULKAN_LIB_CLI)
+        find_package(Vulkan QUIET)
+        if(Vulkan_FOUND)
+            target_link_libraries(qwen3-tts-cli PRIVATE
+                "${GGML_VULKAN_LIB_CLI}"
+                Vulkan::Vulkan
+            )
+        else()
+            message(WARNING "ggml-vulkan found but Vulkan SDK not found. Vulkan backend skipped for CLI.")
+        endif()
+    endif()
+endif()
 
 # Test executable for tokenizer
 add_executable(test_tokenizer
