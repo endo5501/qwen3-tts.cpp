@@ -86,14 +86,21 @@ void qwen3_tts_reset_abort(qwen3_tts_ctx * ctx) {
     ctx->abort_flag.store(false, std::memory_order_release);
 }
 
-int qwen3_tts_synthesize(qwen3_tts_ctx * ctx, const char * text) {
-    if (!ctx || !text) return -1;
-
+static qwen3_tts::tts_params make_params(const qwen3_tts_ctx * ctx, int max_tokens) {
     qwen3_tts::tts_params params;
     params.print_progress = false;
     params.print_timing   = true;
     params.language_id    = ctx->language_id;
+    if (max_tokens > 0) {
+        params.max_audio_tokens = max_tokens;
+    }
+    return params;
+}
 
+int qwen3_tts_synthesize(qwen3_tts_ctx * ctx, const char * text, int max_tokens) {
+    if (!ctx || !text) return -1;
+
+    auto params = make_params(ctx, max_tokens);
     ctx->last_result = ctx->tts.synthesize(text, params);
     if (!ctx->last_result.success) {
         ctx->last_error = ctx->last_result.error_msg;
@@ -105,14 +112,11 @@ int qwen3_tts_synthesize(qwen3_tts_ctx * ctx, const char * text) {
 
 int qwen3_tts_synthesize_with_voice(qwen3_tts_ctx * ctx,
                                      const char * text,
-                                     const char * ref_wav_path) {
+                                     const char * ref_wav_path,
+                                     int max_tokens) {
     if (!ctx || !text || !ref_wav_path) return -1;
 
-    qwen3_tts::tts_params params;
-    params.print_progress = false;
-    params.print_timing   = true;
-    params.language_id    = ctx->language_id;
-
+    auto params = make_params(ctx, max_tokens);
     ctx->last_result = ctx->tts.synthesize_with_voice(text, ref_wav_path, params);
     if (!ctx->last_result.success) {
         ctx->last_error = ctx->last_result.error_msg;
@@ -125,14 +129,11 @@ int qwen3_tts_synthesize_with_voice(qwen3_tts_ctx * ctx,
 int qwen3_tts_synthesize_with_embedding(qwen3_tts_ctx * ctx,
                                          const char * text,
                                          const float * emb_data,
-                                         int emb_size) {
+                                         int emb_size,
+                                         int max_tokens) {
     if (!ctx || !text) return -1;
 
-    qwen3_tts::tts_params params;
-    params.print_progress = false;
-    params.print_timing   = true;
-    params.language_id    = ctx->language_id;
-
+    auto params = make_params(ctx, max_tokens);
     ctx->last_result = ctx->tts.synthesize_with_embedding(text, emb_data, emb_size, params);
     if (!ctx->last_result.success) {
         ctx->last_error = ctx->last_result.error_msg;

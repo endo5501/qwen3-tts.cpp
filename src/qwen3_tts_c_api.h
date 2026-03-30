@@ -26,14 +26,18 @@ QWEN3_TTS_API void qwen3_tts_abort(qwen3_tts_ctx * ctx);
 QWEN3_TTS_API void qwen3_tts_reset_abort(qwen3_tts_ctx * ctx);
 
 // Synthesis (results stored internally; 0 = success, -1 = error)
-QWEN3_TTS_API int qwen3_tts_synthesize(qwen3_tts_ctx * ctx, const char * text);
+// max_tokens: maximum audio frames to generate (0 or negative = use default 2048)
+QWEN3_TTS_API int qwen3_tts_synthesize(qwen3_tts_ctx * ctx, const char * text,
+                                         int max_tokens);
 QWEN3_TTS_API int qwen3_tts_synthesize_with_voice(qwen3_tts_ctx * ctx,
                                                     const char * text,
-                                                    const char * ref_wav_path);
+                                                    const char * ref_wav_path,
+                                                    int max_tokens);
 QWEN3_TTS_API int qwen3_tts_synthesize_with_embedding(qwen3_tts_ctx * ctx,
                                                         const char * text,
                                                         const float * emb_data,
-                                                        int emb_size);
+                                                        int emb_size,
+                                                        int max_tokens);
 
 // Speaker embedding extraction and file I/O (0 = success, -1 = error)
 QWEN3_TTS_API int   qwen3_tts_extract_speaker_embedding(qwen3_tts_ctx * ctx,
