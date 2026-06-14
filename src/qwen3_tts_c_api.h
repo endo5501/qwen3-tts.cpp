@@ -13,17 +13,32 @@ extern "C" {
 
 typedef struct qwen3_tts_ctx qwen3_tts_ctx;
 
-// Lifecycle
-QWEN3_TTS_API qwen3_tts_ctx * qwen3_tts_init(const char * model_dir, int n_threads);
+// Abort handle: holds the atomic abort flag with a lifetime that is independent
+// of any synthesis context. It is created once (per TTS session) and outlives
+// context init/reload/free, so aborting during a model reload never touches a
+// freed context (fixes the F111 use-after-free).
+typedef struct qwen3_tts_abort_handle qwen3_tts_abort_handle;
+
+// Abort handle lifecycle
+QWEN3_TTS_API qwen3_tts_abort_handle * qwen3_tts_create_abort_handle(void);
+QWEN3_TTS_API void                     qwen3_tts_free_abort_handle(qwen3_tts_abort_handle * handle);
+
+// Lifecycle.
+// `abort_handle` may be null; when provided, its flag is checked during all
+// synthesis on this context. The handle is owned by the caller and must outlive
+// the context (it is NOT freed by qwen3_tts_free).
+QWEN3_TTS_API qwen3_tts_ctx * qwen3_tts_init(const char * model_dir, int n_threads,
+                                             qwen3_tts_abort_handle * abort_handle);
 QWEN3_TTS_API int              qwen3_tts_is_loaded(const qwen3_tts_ctx * ctx);
 QWEN3_TTS_API void             qwen3_tts_free(qwen3_tts_ctx * ctx);
 
 // Configuration
 QWEN3_TTS_API void qwen3_tts_set_language(qwen3_tts_ctx * ctx, int language_id);
 
-// Abort (thread-safe, can be called from any thread)
-QWEN3_TTS_API void qwen3_tts_abort(qwen3_tts_ctx * ctx);
-QWEN3_TTS_API void qwen3_tts_reset_abort(qwen3_tts_ctx * ctx);
+// Abort (thread-safe, can be called from any thread). Operates on the abort
+// handle, never on the context.
+QWEN3_TTS_API void qwen3_tts_abort(qwen3_tts_abort_handle * handle);
+QWEN3_TTS_API void qwen3_tts_reset_abort(qwen3_tts_abort_handle * handle);
 
 // Synthesis (results stored internally; 0 = success, -1 = error)
 // max_tokens: maximum audio frames to generate (0 or negative = use default 2048)

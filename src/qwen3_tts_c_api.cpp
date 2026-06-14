@@ -29,20 +29,39 @@ static FILE * fopen_utf8(const char * path, const char * mode) {
 }
 #endif
 
+// Abort flag holder whose lifetime is independent of any synthesis context.
+// Created once per TTS session and outlives context init/reload/free, so an
+// abort issued during a model reload never writes to a freed context (F111).
+struct qwen3_tts_abort_handle {
+    std::atomic<bool> abort_flag{false};
+};
+
 struct qwen3_tts_ctx {
     qwen3_tts::Qwen3TTS   tts;
     qwen3_tts::tts_result  last_result;
     std::string            last_error;
     int32_t                language_id = 2058; // Japanese
-    std::atomic<bool>      abort_flag{false};
 };
 
+// Reads the abort flag from the abort handle passed as callback data. The data
+// pointer is the abort handle (not the context), so this stays valid across
+// context reloads. A null handle means "never aborted".
 static bool abort_callback(void * data) {
-    auto * ctx = static_cast<qwen3_tts_ctx *>(data);
-    return ctx->abort_flag.load(std::memory_order_acquire);
+    auto * handle = static_cast<qwen3_tts_abort_handle *>(data);
+    if (!handle) return false;
+    return handle->abort_flag.load(std::memory_order_acquire);
 }
 
-qwen3_tts_ctx * qwen3_tts_init(const char * model_dir, int n_threads) {
+qwen3_tts_abort_handle * qwen3_tts_create_abort_handle(void) {
+    return new (std::nothrow) qwen3_tts_abort_handle();
+}
+
+void qwen3_tts_free_abort_handle(qwen3_tts_abort_handle * handle) {
+    delete handle;
+}
+
+qwen3_tts_ctx * qwen3_tts_init(const char * model_dir, int n_threads,
+                               qwen3_tts_abort_handle * abort_handle) {
     auto * ctx = new (std::nothrow) qwen3_tts_ctx();
     if (!ctx) {
         return nullptr;
@@ -56,8 +75,10 @@ qwen3_tts_ctx * qwen3_tts_init(const char * model_dir, int n_threads) {
 
     (void)n_threads; // stored in tts_params at synthesis time
 
-    // Install abort callback once so abort flag is checked during all synthesis.
-    ctx->tts.set_abort_callback(abort_callback, ctx);
+    // Install abort callback once so the abort flag is checked during all
+    // synthesis. The callback data is the externally-owned abort handle, whose
+    // lifetime is independent of this context.
+    ctx->tts.set_abort_callback(abort_callback, abort_handle);
 
     return ctx;
 }
@@ -76,14 +97,14 @@ void qwen3_tts_set_language(qwen3_tts_ctx * ctx, int language_id) {
     ctx->language_id = language_id;
 }
 
-void qwen3_tts_abort(qwen3_tts_ctx * ctx) {
-    if (!ctx) return;
-    ctx->abort_flag.store(true, std::memory_order_release);
+void qwen3_tts_abort(qwen3_tts_abort_handle * handle) {
+    if (!handle) return;
+    handle->abort_flag.store(true, std::memory_order_release);
 }
 
-void qwen3_tts_reset_abort(qwen3_tts_ctx * ctx) {
-    if (!ctx) return;
-    ctx->abort_flag.store(false, std::memory_order_release);
+void qwen3_tts_reset_abort(qwen3_tts_abort_handle * handle) {
+    if (!handle) return;
+    handle->abort_flag.store(false, std::memory_order_release);
 }
 
 static qwen3_tts::tts_params make_params(const qwen3_tts_ctx * ctx, int max_tokens) {
